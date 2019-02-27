@@ -1,0 +1,342 @@
+---
+title: "R_Higgs_Solution"
+author: "Prateek"
+date: "November 30, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Data Interpretation & Pre-Processing
+### - Import Train Data
+### - Split this Train data into Train_Part and Dev_Test_Part
+### - Further split both above parts into :
+###     a. feature subset - representing Kinematic properties registered by detectors - Kinematic_Train_Data.
+###     b. feature subset - representing High Level Feature_Function by Physicist - Physicist_Train_Data.
+### - Perform Log. Regression on Train_Part
+
+```{r}
+rm(list = ls(all=TRUE))
+getwd()
+# import
+train_data = read.csv("CSE7302c_train-1539668060821.csv", header = T, sep = ",")
+dim(train_data)   # 68636    30
+head(train_data)
+# dropping "id" column
+train_data$id = NULL
+dim(train_data)   # 68636    29
+
+# Converting target variable to Categorical
+train_data$class = as.factor(train_data$class)
+str(train_data)
+```
+```{r}
+summary(train_data)
+```
+## Observations:
+### Features ==> lepton_pT, missing_energy_magnitude, jet1pt, jet2pt, jet3pt, jet4pt
+### have either influential points or outliers.
+### Need to look into these columns further !
+### At this point dropping them for generic model building
+```{r}
+# Find rows with outlier data:
+dim(train_data)  # 68636    29
+library(dplyr)
+# Dropping (68636 - 66228) rows - probable outliers
+filtered_train = train_data %>% filter(lepton_pT < 3)
+dim(filtered_train)  # 68063    29
+filtered_train = filtered_train %>% filter(missing_energy_magnitude < 3)
+dim(filtered_train)  # 67456    29
+filtered_train = filtered_train %>% filter(jet1pt < 3)
+dim(filtered_train)  # 67163    29
+filtered_train = filtered_train %>% filter(jet2pt < 3)
+dim(filtered_train)  # 66796    29
+filtered_train = filtered_train %>% filter(jet3pt < 3)
+dim(filtered_train)  # 66540    29
+filtered_train = filtered_train %>% filter(jet4pt < 3)
+dim(filtered_train)  # 66228    29
+summary(filtered_train)
+```
+
+```{r}
+# Splitting filtered data into train and test
+library(caret)
+partitionedRows = createDataPartition(y = filtered_train$class, p = 0.7, list = F)
+train_part = filtered_train[partitionedRows , ]
+dim(train_part)  # 46360    29
+dev_test_part = filtered_train[-partitionedRows , ]
+dim(dev_test_part)  # 19868    29
+
+# Selecting features in train_part for model building.
+kinematic_train = train_part[, seq(1,22)]
+head(kinematic_train)
+dim(kinematic_train)    # 46360    22
+
+physt_funOfKinProp_train = train_part[, seq(23,29)]
+# Adding class to this df
+physt_funOfKinProp_train$class = train_part$class
+head(physt_funOfKinProp_train)
+dim(physt_funOfKinProp_train)    # 46360     8
+```
+
+# Start - Working with kinematic_train DATA
+
+```{r}
+str(kinematic_train)
+```
+```{r}
+summary(kinematic_train)
+```
+
+### All predictors are numerical types and correct for given data.
+### Since all of these columns are having same unit ==> No need to standardize !
+
+## Check for missing values
+```{r}
+sum(colSums(is.na(kinematic_train)))
+```
+### No need to Impute!
+
+# Having a look at out Target Variable
+```{r}
+barplot(table(kinematic_train[,"class"]),col = "brown",main = paste("Distribution of ","class"))
+```
+## Correlation plot
+
+```{r}
+library(corrplot)
+## Input is correlation matrix ** to corrplot and not the entire dataset!!
+corrplot(cor(kinematic_train[,2:22]))
+```
+### This shows that the variables(predictors) are NOT highly co-related to each other.
+
+# Building Logistic Regression Model : glm
+
+```{r}
+log_reg = glm(class ~ ., data = kinematic_train, family = binomial)
+log_reg
+```
+```{r}
+summary(log_reg)
+```
+## Model ==>
+## ln( ODDS ) = 0.761927 + (-0.201058)lepton_pT + ... + (-0.056190)jet4b.tag
+### Very Bad, but better than other 2 trials!
+```{r}
+# Try without removing outliers
+head(train_data)
+log_reg_given_data = glm(class ~ ., data = train_data, family = binomial)
+# This is without selecting the kinematic property features
+summary(log_reg_given_data)
+```
+```{r}
+partitionedRows2 = createDataPartition(y = train_data$class, p = 0.7, list = F)
+train_part2 = train_data[partitionedRows2 , ]
+dim(train_part2)  # 48046    29
+dev_test_part2 = train_data[-partitionedRows2 , ]
+dim(dev_test_part2)  # 20590    29
+
+# Selecting features in train_part for model building.
+kinematic_train2 = train_part2[, seq(1,22)]
+dim(kinematic_train2)    # 48046    22
+
+physt_funOfKinProp_train2 = train_part2[, seq(23,29)]
+# Adding class to this df
+physt_funOfKinProp_train2$class = train_part2$class
+
+log_reg_kinematic_data = glm(class ~ ., data = kinematic_train2, family = binomial)
+# This is after selecting the kinematic property features, but without removing the outliers
+summary(log_reg_kinematic_data)
+```
+### So there is improvement of 10% when outliers are removed from the data set and then model is built.
+### And we have maximum significant variables present in refression equation.
+
+### We will proceed with glm : "log_reg"
+
+# Applying LASSO because, corrplot showed that features are not highly multicolinear, so Ridge will not help much.
+```{r}
+# kinematic_train  ==>  46360    22
+head(kinematic_train)
+matrix_kinematic <- as.matrix(kinematic_train[,2:22])
+dim(matrix_kinematic)  # 46360    21
+kinematic_train_copy = kinematic_train
+dim(kinematic_train_copy)
+kinematic_train_copy$class = as.integer(kinematic_train_copy$class)
+str(kinematic_train_copy)
+matrix_class = as.matrix(kinematic_train_copy[,1])
+dim(matrix_class)
+```
+```{r}
+library(glmnet)
+# Performing LASSO - Finding Lambda
+cv_lasso <- cv.glmnet(matrix_kinematic, matrix_class, alpha = 1, type.measure = "mse", nfolds = 4)
+cv_lasso
+```
+
+```{r}
+plot(cv_lasso$glmnet.fit, xvar="lambda", label=TRUE)
+```
+```{r}
+print(cv_lasso$lambda.min)
+```
+```{r}
+coef(cv_lasso)
+```
+
+```{r}
+lasso_model <- glmnet(matrix_kinematic, matrix_class, lambda = cv_lasso$lambda.min, alpha = 1)
+coef(lasso_model)
+summary(lasso_model)
+```
+
+```{r}
+# TEst Data:
+dim(dev_test_part)
+```
+## * Use this model to predict on test data
+```{r}
+dev_test_part_x = dev_test_part[,2:22]
+dev_test_matrix = as.matrix(dev_test_part_x)
+dim(dev_test_part_x)
+preds_lasso <- predict(lasso_model, dev_test_matrix, type = "response")
+dim(preds_lasso)
+```
+
+## Lasso Regression Model Metrics
+
+```{r}
+library(DMwR)
+preds_train = predict(lasso_model, matrix_kinematic)
+# Passing actual target values in "trues" for evaluation
+regr.eval(trues =matrix_class, preds = preds_train)
+```
+## Lets see on our dev_test data
+```{r}
+dev_test_part_class = dev_test_part[,1]
+str(dev_test_part_class)
+dev_test_matrix_class = as.matrix(as.integer(dev_test_part_class))
+dim(dev_test_matrix_class)
+
+regr.eval(trues = dev_test_matrix_class, preds = preds_lasso)
+```
+### So, training looks Good !
+
+# Let's import the given test data:
+```{r}
+test_data = read.csv("CSE7302c_test-1539668060821.csv", header = T, sep = ",")
+dim(test_data)   # 29414    30
+head(test_data)
+```
+```{r}
+# dropping "id" column
+test_data$id = NULL
+dim(test_data)   # 29414    29
+
+# Converting target variable to Categorical
+test_data$class = as.factor(test_data$class)
+str(test_data)
+```
+## Need to convert last 9 columns to numeric
+```{r}
+View(test_data)
+test_data$jet4phi = as.numeric(test_data$jet4phi)
+test_data$jet4b.tag = as.numeric(test_data$jet4b.tag)
+test_data$m_jj = as.numeric(test_data$m_jj)
+test_data$m_jjj = as.numeric(test_data$m_jjj)
+test_data$m_lv = as.numeric(test_data$m_lv)
+test_data$m_jlv = as.numeric(test_data$m_jlv)
+test_data$m_bb = as.numeric(test_data$m_bb)
+test_data$m_wbb = as.numeric(test_data$m_wbb)
+test_data$m_wwbb = as.numeric(test_data$m_wwbb)
+str(test_data)
+```
+```{r}
+summary(test_data)
+```
+```{r}
+sum(is.na(test_data))
+write.csv(x = test_data, file = "test_data_verify.csv", sep = ",")
+```
+
+## * Actual Test
+### Use this model to predict on actual test data
+```{r}
+actual_test_part_x = test_data[,2:22]
+actual_test_matrix = as.matrix(actual_test_part_x)
+dim(actual_test_matrix)
+preds_lasso_on_test <- predict(lasso_model, actual_test_matrix, type = "response")
+dim(preds_lasso_on_test)
+```
+
+## Lasso Regression Model Metrics
+## Lets see on our dev_test data
+```{r}
+actual_test_part_class = test_data[,1]
+str(actual_test_part_class)
+actual_test_matrix_class = as.matrix(as.integer(actual_test_part_class))
+dim(actual_test_matrix_class)
+
+regr.eval(trues = actual_test_matrix_class, preds = preds_lasso_on_test)
+```
+### The difference is big!
+```{r}
+plot(log_reg)
+```
+## VIF
+```{r}
+car::vif(log_reg)
+```
+# Performance Analysis ON test
+```{r}
+prob_train = predict(log_reg,newdata = test_data, type = "response")
+
+str(prob_train)
+```
+```{r}
+library(ROCR)
+dim(test_data)
+pred = prediction(predictions = prob_train, labels = test_data$class)
+# it has many objects to calculate true and false positive rate so we use belo performance fn
+
+perf =  performance(pred, measure = "tpr", x.measure = "fpr")
+
+plot(perf, col = rainbow(10), colorize = T, print.cutoffs.at = seq(0,1,0.05))
+```
+```{r}
+perf_auc = performance(pred, measure = "auc")
+
+# Access the auc score from the performance object
+
+auc = perf_auc@y.values[[1]]
+print(auc)
+```
+# MODEL REJECTED
+# Performance Analysis ON TRAIN
+```{r}
+prob_train = predict(log_reg,newdata = train_data, type = "response")
+str(prob_train)
+```
+```{r}
+library(ROCR)
+dim(train_data)
+pred = prediction(predictions = prob_train, labels = train_data$class)
+# it has many objects to calculate true and false positive rate so we use belo performance fn
+
+perf =  performance(pred, measure = "tpr", x.measure = "fpr")
+
+plot(perf, col = rainbow(10), colorize = T, print.cutoffs.at = seq(0,1,0.05))
+```
+```{r}
+perf_auc = performance(pred, measure = "auc")
+
+# Access the auc score from the performance object
+
+auc = perf_auc@y.values[[1]]
+print(auc)
+```
+## Logistic Model is only better for train at 59%
+### ==> Dropping records did not help!
+#=================X=================X=================X=================
+
